@@ -30,7 +30,8 @@ These are bounds with configured tolerance and grace periods, not a claim that e
 | killaura | Attack ray misses the lag-expanded server hitbox, attacks through a wall, attacks multiple entities in one tick, or attacks while using an incompatible item | Cancels the hit after the relevant buffer |
 | aim-assist | At least 10 of the latest 12 PvP hits are within 0.45 degrees of the target center | OP-only suspicion notice; does not cancel the hit or punish |
 | hitbox | Repeated attack ray misses the server-side player hitbox after bounded ping and target-motion allowance | Cancels the hit after the buffer |
-| criticals | Repeated oversized damage on a server-grounded hit beyond a conservative non-critical ceiling | Cancels the hit after the buffer |
+| criticals | Paper marks a melee hit as critical while collision, movement history, vertical speed, and fall distance all show stable ground contact | Cancels the hit after the buffer |
+| triggerbot | At least 10 of the latest 12 PvP hits are 2.85–3.15 blocks from the target box, have full attack cooldown, and at least 9 attack intervals match the weapon cooldown within one tick | OP-only suspicion notice; never cancels a hit or punishes a player |
 | reach | Eye-to-hitbox distance exceeds the interaction-range allowance, with ping tolerance | Cancels the hit after the buffer |
 | scaffold | Excessive placement rate, placement inconsistent with the crosshair target, or placement out of reach | Cancels placement after the buffer |
 | boatfly / boatspeed | Boat hovers or rises without a valid source, or exceeds its surface allowance | Ejects the rider and corrects the vehicle position |
@@ -46,8 +47,10 @@ On join, Paper's reported client brand is saved in `plugins/SentinelAC/client-br
 ## Known limits
 
 - The plugin does not inspect raw network packets. Checks use the state Paper exposes through events and entity attributes.
-- The aim-assist check is only a coarse precision heuristic: skilled players can trigger it, and a cheat that stays within ordinary aim patterns can evade it. It is alert-only.
+- The aim-assist and triggerbot checks are heuristics: skilled players can trigger them, and cheats can evade them. They are alert-only and must be reviewed manually.
 - The hitbox check detects attack rays that miss the server-side box; it cannot directly inspect a modified client hitbox.
+- Paper's pre-attack event exposes a cooldown sample before damage processing, but the Bukkit/Paper event layer does not reveal exact client-side triggerbot logic. Repeated range and cadence patterns are suspicion evidence, not proof.
 - Movement checks can need tuning for unusual server plugins, knockback, pistons, slime/bed bounces, wind charges, and lag.
 - Client-brand values are not reliable proof of client software.
 - Project documentation records that this build has not yet been validated on a live Paper server.
+
