@@ -1,0 +1,19 @@
+name: SentinelAC
+version: '1.0.1'
+main: dev.codex.sentinel.SentinelPlugin
+api-version: '26.2'
+authors: [Codex]
+description: Always-on, physics-based Paper anticheat (operators see all logs)
+commands:
+  anticheat:
+    aliases: [sac]
+    description: SentinelAC operator commands
+    usage: /anticheat <status|alerts|inspect|violations|checks|reset|debug|reload|punish>
+  brandcheck:
+    description: View a saved client brand (operators only)
+    usage: /brandcheck <player>
+    permission: sentinel.admin
+permissions:
+  sentinel.admin:
+    description: Allows operator-only SentinelAC commands
+    default: op
