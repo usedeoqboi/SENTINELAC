@@ -48,6 +48,15 @@ checks:
     buffer: 3
     violations-per-flag: 1.0
     confirmed-after: 3
+  triggerbot:
+    sample-count: 12
+    sample-window-ticks: 300
+    minimum-precise-hits: 10
+    minimum-precise-intervals: 9
+    minimum-distance: 2.85
+    maximum-distance: 3.15
+    minimum-attack-cooldown: 0.99
+    timing-tolerance-ticks: 1.0
   reach:
     base-tolerance: 0.4          # added to the interaction range attribute (3.0; spear 4.5), plus per-ms-tolerance * ping
     per-ms-tolerance: 0.006
@@ -127,3 +136,4 @@ lag:
 performance:
   storage-queue-capacity: 10000
   debug-duration-seconds: 60
+
