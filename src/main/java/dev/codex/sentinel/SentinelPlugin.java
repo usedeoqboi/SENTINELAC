@@ -37,7 +37,8 @@ public final class SentinelPlugin extends JavaPlugin implements TabCompleter {
             "killaura - aim ray, through-wall, multi-target, attacking while using an item",
             "aim-assist - repeated near-perfect PvP aim, operator alert only",
             "hitbox - repeated PvP attack rays outside the server-side target hitbox",
-            "criticals - repeated oversized hits while server-side grounded",
+            "criticals - repeated Paper-marked critical hits while server-side stably grounded",
+            "triggerbot - repeated exact-range, full-cooldown PvP timing pattern, operator alert only",
             "reach - eye to hitbox distance vs interaction range",
             "scaffold - placement rate, reach, crosshair",
             "boatfly / boatspeed / vehiclespeed - vehicle lift and per-surface speed",
@@ -276,3 +277,4 @@ public final class SentinelPlugin extends JavaPlugin implements TabCompleter {
         return List.of();
     }
 }
+
