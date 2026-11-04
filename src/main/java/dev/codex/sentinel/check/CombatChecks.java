@@ -26,6 +26,7 @@ import org.bukkit.event.entity.EntityDamageByEntityEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.potion.PotionEffectType;
+import io.papermc.paper.event.player.PrePlayerAttackEntityEvent;
 import org.bukkit.util.BoundingBox;
 import org.bukkit.util.RayTraceResult;
 import org.bukkit.util.Vector;
@@ -41,9 +42,16 @@ import java.util.UUID;
  * Runs at HIGH priority; a flagged hit is cancelled so it does no damage.
  */
 public final class CombatChecks implements Listener {
+    private record PendingAttack(UUID target, int tick, float cooldown, float cooldownPeriod) { }
+    private record TriggerSample(int tick, double distance, float cooldown, float cooldownPeriod,
+                                 boolean exactRay, String weapon) { }
+
     private final SentinelPlugin plugin;
     private final Map<UUID, ArrayDeque<Boolean>> preciseAimHits = new HashMap<>();
     private final Map<UUID, Long> lastAimNotice = new HashMap<>();
+    private final Map<UUID, PendingAttack> pendingAttacks = new HashMap<>();
+    private final Map<UUID, ArrayDeque<TriggerSample>> triggerSamples = new HashMap<>();
+    private final Map<UUID, Long> lastTriggerNotice = new HashMap<>();
     public CombatChecks(SentinelPlugin plugin) { this.plugin = plugin; }
 
     private FileConfiguration cfg() { return plugin.getConfig(); }
@@ -61,6 +69,17 @@ public final class CombatChecks implements Listener {
         return n.endsWith("_SPEAR") || n.equals("TRIDENT");
     }
 
+    /** Capture attack timing before Paper runs the damage logic and resets the attack ticker. */
+    @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
+    public void onPreAttack(PrePlayerAttackEntityEvent event) {
+        if (!event.willAttack() || !(event.getAttacked() instanceof Player)) return;
+        Player attacker = event.getPlayer();
+        if (!Physics.survival(attacker)) return;
+        pendingAttacks.put(attacker.getUniqueId(), new PendingAttack(
+                event.getAttacked().getUniqueId(), Bukkit.getCurrentTick(),
+                attacker.getAttackCooldown(), attacker.getCooldownPeriod()));
+    }
+
     @EventHandler(priority = EventPriority.HIGH, ignoreCancelled = true)
     public void onAttack(EntityDamageByEntityEvent e) {
         // Sweeps, thorns and other secondary damage legitimately reach beyond normal range.
@@ -72,6 +91,9 @@ public final class CombatChecks implements Listener {
         MoveState s = d.move;
         Entity target = e.getEntity();
         int tick = Bukkit.getCurrentTick();
+        PendingAttack pending = pendingAttacks.remove(p.getUniqueId());
+        boolean hasPreAttackSample = pending != null && pending.tick() == tick
+                && pending.target().equals(target.getUniqueId());
         int ping = Math.min(p.getPing(), 400);
         ItemStack hand = p.getInventory().getItemInMainHand();
         String item = hand.getType().name();
@@ -129,6 +151,7 @@ public final class CombatChecks implements Listener {
         }
 
         RayTraceResult ray = box.clone().expand(expand).rayTrace(eyeV, dir, allowed + 1.0);
+        RayTraceResult exactServerRay = box.rayTrace(eyeV, dir, allowed + 1.0);
         if (ray == null) {
             if (d.bump("ka-aim", 1, c.getDouble("checks.killaura.aim-buffer", 3))) {
                 plugin.flag(p, "killaura", "combat", String.format(Locale.US, "hit a target that is not under the crosshair (hitbox expanded %.2f for %dms ping)", expand, ping));
@@ -163,10 +186,16 @@ public final class CombatChecks implements Listener {
         if (spear && !cancel) cancel = spearKill(p, s, e, hand, item, target, tick);
         if (!cancel) cancel = criticals(p, d, s, e, hand);
 
+        // Triggerbot is a pattern alert only: exact range and timing patterns can still be produced by skilled players.
+        if (!cancel && target instanceof Player && hasPreAttackSample) {
+            recordTriggerSample(p, dist, pending.cooldown(), pending.cooldownPeriod(),
+                    exactServerRay != null, item, tick);
+        }
+
         if (cancel) e.setCancelled(true);
     }
 
-    /** Detects impossible critical bonus damage while server-side ground state says the attacker is grounded. */
+    /** Cancels repeated server-marked critical hits only when independent server state shows stable ground contact. */
     private boolean criticals(Player player, PlayerData data, MoveState move, EntityDamageByEntityEvent event, ItemStack weapon) {
         if (player.isInsideVehicle() || player.isInWater() || player.isClimbing()
                 || player.isGliding() || player.isRiptiding()
@@ -174,34 +203,86 @@ public final class CombatChecks implements Listener {
 
         Location location = player.getLocation();
         boolean physicallyGrounded = Physics.onGround(player.getWorld(),
-                location.getX(), location.getY(), location.getZ());
+                location.getX(), location.getY(), location.getZ())
+                || Physics.entitySupport(player.getWorld(), location.getX(), location.getY(), location.getZ());
         boolean serverObservedFalling = move.airTicks > 0
                 && move.maxY > location.getY() + 0.01
                 && move.prevDy < 0;
-        boolean validFallingCrit = !physicallyGrounded
-                && serverObservedFalling
-                && player.getFallDistance() > 0.0f
-                && player.getVelocity().getY() < -0.08;
+        boolean stableGrounded = physicallyGrounded
+                && move.airTicks == 0
+                && move.prevDy >= -0.01
+                && player.getVelocity().getY() >= -0.01
+                && player.getFallDistance() <= 0.0f
+                && !serverObservedFalling;
 
-        double normalDamage = Physics.attr(player, Attribute.ATTACK_DAMAGE, 1.0);
-        int sharpness = weapon.getEnchantmentLevel(Enchantment.SHARPNESS);
-        if (sharpness > 0) normalDamage += 0.5 * sharpness + 0.5;
-        int strength = Physics.effectLevel(player, PotionEffectType.STRENGTH);
-        if (strength > 0) normalDamage += 3.0 * strength;
-
-        // Extra headroom prevents ordinary rounding and attribute variation from being called a critical.
-        double groundedMaximum = normalDamage * 1.35 + 0.25;
-        if (validFallingCrit || event.getDamage() <= groundedMaximum) {
+        // Paper marks whether this melee damage was actually critical; damage totals are affected by armor/plugins.
+        if (!event.isCritical() || !stableGrounded) {
             data.relax("criticals", 0.5);
             return false;
         }
         if (data.bump("criticals", 1, cfg().getDouble("checks.criticals.buffer", 3))) {
             plugin.flag(player, "criticals", "combat", String.format(Locale.US,
-                    "grounded hit dealt %.2f damage; conservative non-critical ceiling %.2f",
-                    event.getDamage(), groundedMaximum));
+                    "Paper marked a critical while server state showed stable ground contact (airTicks=%d, fallDistance=%.2f, verticalSpeed=%.3f)",
+                    move.airTicks, player.getFallDistance(), player.getVelocity().getY()));
             return true;
         }
         return false;
+    }
+
+    /** Looks for repeated near-three-block hits at full cooldown and a nearly mechanical attack cadence. */
+    private void recordTriggerSample(Player attacker, double distance, float cooldown, float cooldownPeriod,
+                                     boolean exactRay, String weapon, int tick) {
+        FileConfiguration c = cfg();
+        String path = "checks.triggerbot.";
+        int sampleCount = Math.max(6, c.getInt(path + "sample-count", 12));
+        int windowTicks = Math.max(sampleCount, c.getInt(path + "sample-window-ticks", 300));
+        ArrayDeque<TriggerSample> samples = triggerSamples.computeIfAbsent(attacker.getUniqueId(), ignored -> new ArrayDeque<>());
+        while (!samples.isEmpty() && tick - samples.peekFirst().tick() > windowTicks) samples.removeFirst();
+        samples.addLast(new TriggerSample(tick, distance, cooldown, cooldownPeriod, exactRay, weapon));
+        while (samples.size() > sampleCount) samples.removeFirst();
+        if (samples.size() < sampleCount) return;
+
+        double minDistance = c.getDouble(path + "minimum-distance", 2.85);
+        double maxDistance = c.getDouble(path + "maximum-distance", 3.15);
+        double minCooldown = c.getDouble(path + "minimum-attack-cooldown", 0.99);
+        double timingTolerance = c.getDouble(path + "timing-tolerance-ticks", 1.0);
+        int minimumPreciseHits = Math.min(sampleCount,
+                Math.max(1, c.getInt(path + "minimum-precise-hits", 10)));
+        int minimumPreciseIntervals = Math.min(sampleCount - 1,
+                Math.max(1, c.getInt(path + "minimum-precise-intervals", 9)));
+
+        int preciseHits = 0;
+        int preciseIntervals = 0;
+        TriggerSample previous = null;
+        for (TriggerSample sample : samples) {
+            boolean precise = sample.exactRay()
+                    && sample.distance() >= minDistance && sample.distance() <= maxDistance
+                    && sample.cooldown() >= minCooldown;
+            if (precise) preciseHits++;
+            if (previous != null) {
+                boolean previousPrecise = previous.exactRay()
+                        && previous.distance() >= minDistance && previous.distance() <= maxDistance
+                        && previous.cooldown() >= minCooldown;
+                double expectedTicks = (sample.cooldownPeriod() + previous.cooldownPeriod()) / 2.0;
+                if (precise && previousPrecise && sample.weapon().equals(previous.weapon())
+                        && Math.abs((sample.tick() - previous.tick()) - expectedTicks) <= timingTolerance) {
+                    preciseIntervals++;
+                }
+            }
+            previous = sample;
+        }
+
+        if (preciseHits < minimumPreciseHits || preciseIntervals < minimumPreciseIntervals) return;
+        long now = System.currentTimeMillis();
+        UUID id = attacker.getUniqueId();
+        if (now - lastTriggerNotice.getOrDefault(id, 0L) < 60_000L) return;
+        lastTriggerNotice.put(id, now);
+        String text = String.format(Locale.US,
+                "[SentinelAC] Possible triggerbot pattern: %s had %d/%d precise PvP hits at %.2f-%.2f blocks with full cooldown and %d regular attack intervals. Review manually; this is not proof.",
+                attacker.getName(), preciseHits, sampleCount, minDistance, maxDistance, preciseIntervals);
+        for (Player viewer : Bukkit.getOnlinePlayers()) {
+            if (viewer.isOp()) viewer.sendMessage(net.kyori.adventure.text.Component.text(text));
+        }
     }
 
     /** Emits a suspicion notice only; repeated accurate hits alone never cancel attacks or punish players. */
@@ -232,6 +313,9 @@ public final class CombatChecks implements Listener {
         UUID id = event.getPlayer().getUniqueId();
         preciseAimHits.remove(id);
         lastAimNotice.remove(id);
+        pendingAttacks.remove(id);
+        triggerSamples.remove(id);
+        lastTriggerNotice.remove(id);
     }
 
     /** Mace smash damage grows with fall distance. Compare the server's fall distance with the fall the server actually watched. */
@@ -280,3 +364,4 @@ public final class CombatChecks implements Listener {
         return it.getEnchantments().keySet().stream().anyMatch(en -> en.getKey().getKey().equals("lunge"));
     }
 }
+
