@@ -1,0 +1,57 @@
+name: Build SENTINELAC
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Test and package (Java 25)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Set up Java 25
+        uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      - name: Read Maven version from root pom.xml
+        id: project-version
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import xml.etree.ElementTree as ET
+
+          root = ET.parse("pom.xml").getroot()
+          namespace = {"m": "http://maven.apache.org/POM/4.0.0"}
+          version = root.findtext("m:version", namespaces=namespace)
+          if not version:
+              raise SystemExit("Root pom.xml has no project version")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+          PY
+
+      - name: Test and package plugin
+        run: mvn --batch-mode --no-transfer-progress clean verify
+
+      - name: Upload plugin JAR
+        uses: actions/upload-artifact@v7
+        with:
+          name: SentinelAC-${{ steps.project-version.outputs.version }}
+          path: target/SentinelAC-*.jar
+          if-no-files-found: error
+          retention-days: 14
