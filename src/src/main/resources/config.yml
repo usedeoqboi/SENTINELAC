@@ -1,0 +1,142 @@
+# Every check is always on and nobody is exempt. There are no per-check switches.
+# Thresholds below are tolerances around vanilla physics limits (see DETECTIONS.md), not flat speed caps.
+
+global:
+  target-platform: "Paper 26.2"
+
+checks:
+  speed:
+    tolerance: 0.05              # blocks/tick on top of the physics bound (entity pushing, rounding)
+    buffer: 3                    # violations needed before a flag; each clean move relaxes it by 0.25
+    max-water-per-tick: 0.95
+    violations-per-flag: 1.0
+    confirmed-after: 6
+  fly:
+    tolerance: 0.03
+    buffer: 3
+    max-air-ticks: 16            # a flat jump lasts 12 ticks; +8 per Jump Boost level
+    min-descent: 1.0
+    violations-per-flag: 1.0
+    confirmed-after: 4
+  nofall:
+    buffer: 2
+    violations-per-flag: 1.0
+    confirmed-after: 3
+  timer:
+    bank-ms: 400                 # banked lag allowance (plus the player's ping, max 500)
+    threshold-ms: 80
+    buffer: 3
+    violations-per-flag: 1.0
+    confirmed-after: 4
+  antiknockback:
+    window-events: 5
+    violations-per-flag: 1.0
+    confirmed-after: 3
+  killaura:
+    base-expand: 0.3             # hitbox expansion for the crosshair ray, plus per-ms-expand * ping
+    per-ms-expand: 0.006
+    aim-buffer: 3
+    violations-per-flag: 1.0
+    confirmed-after: 4
+  hitbox:
+    base-lag-expansion: 0.12
+    assumed-target-bps: 5.6      # a player target may be running at sprint speed even if the server velocity reads zero
+    obvious-extra: 0.75          # a miss this far beyond the allowance is flagged at once; smaller misses need the buffer
+    max-lag-expansion: 0.65
+    buffer: 3
+    violations-per-flag: 1.0
+    confirmed-after: 3
+  criticals:
+    buffer: 3
+    violations-per-flag: 1.0
+    confirmed-after: 3
+  triggerbot:
+    sample-count: 12
+    sample-window-ticks: 300
+    minimum-precise-hits: 10
+    minimum-precise-intervals: 9
+    minimum-distance: 2.85
+    maximum-distance: 3.15
+    minimum-attack-cooldown: 0.99
+    timing-tolerance-ticks: 1.0
+  reach:
+    obvious-extra: 1.0           # overshoot this far beyond the allowance is flagged at once; smaller ones need a repeat (not spears)
+    base-tolerance: 0.4          # added to the interaction range attribute (3.0; spear 4.5), plus per-ms-tolerance * ping
+    per-ms-tolerance: 0.006
+    violations-per-flag: 1.0
+    confirmed-after: 4
+  scaffold:
+    max-per-second: 20
+    max-per-tick: 4
+    reach-tolerance: 0.8
+    aim-buffer: 2
+    violations-per-flag: 1.0
+    confirmed-after: 4
+  boatfly:
+    hover-ticks: 6
+    violations-per-flag: 1.0
+    confirmed-after: 3
+  boatspeed:
+    buffer: 3
+    violations-per-flag: 1.0
+    confirmed-after: 3
+  vehiclespeed:
+    max-minecart-per-tick: 1.8   # vanilla is 0.4 (8 b/s); the minecart-improvements experiment is faster
+    violations-per-flag: 1.0
+    confirmed-after: 3
+  macekill:
+    fall-tolerance: 1.5
+    violations-per-flag: 2.0
+    confirmed-after: 2
+  spearkill:
+    damage-margin: 8             # room for Sharpness, Strength and rounding on top of multiplier x speed
+    violations-per-flag: 2.0
+    confirmed-after: 2
+  invalid-action:
+    violations-per-flag: 1.0
+    confirmed-after: 3
+
+violations:
+  decay-per-minute: 1.0
+  confirmation-window-seconds: 30
+
+alerts:
+  enabled: true                  # every flag is sent to subscribed operators; only operators can subscribe
+  format: "&c[Sentinel] &f{player} &7{check} &cVL {vl} &8({evidence}; ping {ping}ms)"
+
+logging:
+  console: true
+  sqlite: true
+  debug: false
+  retention-days: 30             # violations only; audit rows are kept. 0 = keep forever
+
+database:
+  file: "sentinel.db"
+
+# Cheats are stopped by cancelling the move/hit/placement and putting the player back. Kick and ban are separate and OFF by default.
+punishments:
+  monitoring-only: true          # blocks automatic KICK and BAN only; setbacks and cancels always apply
+  automatic-kick:
+    enabled: false
+    minimum-violations: 20
+    require-confirmed-detection: true
+  automatic-ban:
+    enabled: false
+    minimum-violations: 50
+    require-confirmed-detection: true
+    duration: "7d"
+    permanent: false
+  manual-kick-message: "&cYou were removed by staff: {reason}"
+  automatic-kick-message: "&cYou were removed by SentinelAC."
+  automatic-ban-reason: "Unfair advantage detected by SentinelAC"
+
+lag:
+  minimum-tps: 18.0              # the timer check pauses below this
+  join-grace-ticks: 40
+  teleport-grace-ticks: 20
+  riptide-grace-ticks: 60
+
+performance:
+  storage-queue-capacity: 10000
+  debug-duration-seconds: 60
+
